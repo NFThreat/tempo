@@ -1,0 +1,11 @@
+node_modules/
+.env
+dist/
+
+# Foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+
+# Relayer state (contains access-key private keys — never commit)
+relayer/data/

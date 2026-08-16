@@ -1,0 +1,13 @@
+{
+  "name": "tempo-pass",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": ["app", "relayer"],
+  "scripts": {
+    "contracts:build": "cd contracts && forge build",
+    "contracts:test": "cd contracts && forge test",
+    "app:dev": "npm run dev --workspace app",
+    "relayer:dev": "npm run dev --workspace relayer",
+    "typecheck": "npm run typecheck --workspace app && npm run typecheck --workspace relayer"
+  }
+}

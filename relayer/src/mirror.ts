@@ -1,0 +1,73 @@
+import { createPublicClient, getAddress, http } from 'viem'
+import { sepolia } from 'viem/chains'
+import { config } from './config.js'
+import { loadState, saveState } from './db.js'
+import { ethWalletClient, mirrorAbi, transferEvent } from './tempo.js'
+
+const tempoPublicClient = createPublicClient({ transport: http(config.tempoRpc) })
+
+/// Watch Tempo PassNFT Transfer events and mirror mint/burn/holder changes
+/// onto the Ethereum mirror. The Tempo contract is the source of truth.
+export async function runMirrorLoop(): Promise<number> {
+  if (!config.mirrorAddress || !config.mirrorRelayerPk) {
+    console.warn('[mirror] MIRROR_ADDRESS / MIRROR_RELAYER_PK not set — skipping')
+    return 0
+  }
+  const passAddresses = [...config.passAddresses]
+  if (!passAddresses.length) {
+    console.warn('[mirror] PASS_ADDRESSES not set — skipping')
+    return 0
+  }
+
+  const state = loadState()
+  const latest = await tempoPublicClient.getBlockNumber()
+  const from = state.lastMirrorBlock > 0 ? BigInt(state.lastMirrorBlock) + 1n : latest
+  if (from > latest) return 0
+
+  const synced: { tokenId: bigint; holder: `0x${string}`; active: boolean }[] = []
+  for (const pass of passAddresses) {
+    const logs = await tempoPublicClient.getLogs({
+      address: getAddress(pass) as `0x${string}`,
+      event: transferEvent,
+      fromBlock: from,
+      toBlock: latest,
+    })
+    for (const log of logs) {
+      const { from: f, to: t, tokenId } = log.args as {
+        from?: `0x${string}`
+        to?: `0x${string}`
+        tokenId?: bigint
+      }
+      if (!f || !t || tokenId === undefined) continue
+      const minted = f === '0x0000000000000000000000000000000000000000'
+      const burned = t === '0x0000000000000000000000000000000000000000'
+      if (minted || burned || f !== t) {
+        synced.push({
+          tokenId,
+          holder: t,
+          active: !burned,
+        })
+      }
+    }
+  }
+
+  if (synced.length) {
+    const eth = ethWalletClient(config.ethRpc)
+    const ethPublic = createPublicClient({ chain: sepolia, transport: http(config.ethRpc) })
+    for (const s of synced) {
+      const tx = await eth.writeContract({
+        address: getAddress(config.mirrorAddress) as `0x${string}`,
+        abi: mirrorAbi,
+        functionName: 'sync',
+        args: [s.tokenId, s.holder, s.active],
+        chain: sepolia,
+      })
+      await ethPublic.waitForTransactionReceipt({ hash: tx })
+      console.log(`[mirror] token ${s.tokenId} -> ${s.active ? 'active' : 'burned'} (${tx})`)
+    }
+  }
+
+  state.lastMirrorBlock = Number(latest)
+  saveState()
+  return synced.length
+}

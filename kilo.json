@@ -1,0 +1,11 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  "snapshot": false,
+  "mcp": {
+    "tempo": {
+      "type": "remote",
+      "url": "https://mcp.tempo.xyz",
+      "enabled": true
+    }
+  }
+}
