@@ -17,3 +17,7 @@ sepolia = "${SEPOLIA_RPC_URL}"
 
 [etherscan]
 tempo = { key = "none", url = "https://contracts.tempo.xyz" }
+
+# Plain-EVM profile for deploying MirrorPassNFT to Sepolia (fees paid in ETH, not TIP20).
+[profile.sepolia]
+tempo = false
