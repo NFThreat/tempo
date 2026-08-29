@@ -2,7 +2,7 @@
 export const PATHUSD = '0x20C0000000000000000000000000000000000000' as const
 
 // Account Keychain precompile (see Tempo docs).
-export const ACCOUNT_KEYCHAIN = '0xAAAAAAAA00000000000000000000000000000000' as const
+export const ACCOUNT_KEYCHAIN = '0xaaaaaaaa00000000000000000000000000000000' as const
 
 export function env(name: string, fallback = ''): string {
   const v = process.env[name]

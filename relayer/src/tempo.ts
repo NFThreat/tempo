@@ -49,6 +49,11 @@ export function accessKeyFromPrivate(privateKey: string, rootAccount: `0x${strin
   return Account.fromP256(privateKey as `0x${string}`, { access: rootAccount })
 }
 
+/// Derive the public keyId from a stored access-key private key.
+export function keyIdFromPrivate(privateKey: string): `0x${string}` {
+  return Account.fromP256(privateKey as `0x${string}`).address
+}
+
 /// Batch-send a TIP-20 payment to the treasury plus pass contract calls,
 /// signed by the subscriber's access key. Fees are paid in pathUSD.
 export async function payAndCall(

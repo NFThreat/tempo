@@ -2,7 +2,7 @@ import { createServer } from 'node:http'
 import { config } from './config.js'
 import { loadState } from './db.js'
 import { runMirrorLoop } from './mirror.js'
-import { activateSubscription, createSubscriptionKey, runRenewalLoop } from './subscriptions.js'
+import { activateSubscription, createSubscriptionKey, getSubscriptionKey, runRenewalLoop } from './subscriptions.js'
 
 async function handle(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) {
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`)
@@ -46,6 +46,13 @@ async function handle(req: import('node:http').IncomingMessage, res: import('nod
     if (method === 'POST' && url.pathname === '/key') {
       const body = await readBody()
       const result = await createSubscriptionKey({ pass: body.pass, user: body.user })
+      return json(200, result)
+    }
+
+    if (method === 'GET' && url.pathname === '/key') {
+      const pass = url.searchParams.get('pass') ?? ''
+      const user = url.searchParams.get('user') ?? ''
+      const result = await getSubscriptionKey({ pass, user })
       return json(200, result)
     }
 

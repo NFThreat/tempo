@@ -1,7 +1,7 @@
 import { getAddress } from 'viem'
 import { config } from './config.js'
 import { loadState, saveState, subKey } from './db.js'
-import { accessKeyFromPrivate, createAccessKey, passAbi, payAndCall, passCallData, publicClient, readPassConfig, tip20TransferData } from './tempo.js'
+import { accessKeyFromPrivate, createAccessKey, keyIdFromPrivate, passAbi, payAndCall, passCallData, publicClient, readPassConfig, tip20TransferData } from './tempo.js'
 
 export interface KeyRequest {
   pass: string
@@ -55,6 +55,20 @@ export async function createSubscriptionKey(req: KeyRequest): Promise<KeyRespons
     treasury: cfg.treasury,
     limit: limitForPrice(cfg.price),
   }
+}
+
+/// Look up the access-key keyId for an existing subscription, so the user
+/// can revoke it onchain to stop renewals.
+export async function getSubscriptionKey(req: KeyRequest): Promise<{ keyId: string }> {
+  const pass = getAddress(req.pass) as `0x${string}`
+  const user = getAddress(req.user) as `0x${string}`
+  const state = loadState()
+  const key = subKey(pass, user)
+  const pending = state.pendingKeys[key]
+  if (pending) return { keyId: pending.keyId }
+  const sub = state.subscriptions[key]
+  if (sub) return { keyId: keyIdFromPrivate(sub.accessKeyPrivate) }
+  throw new Error('no subscription found for this user')
 }
 
 /// Step 2: after the user authorized the key and minted the pass, confirm

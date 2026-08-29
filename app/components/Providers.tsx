@@ -9,6 +9,7 @@ const wagmiConfig = createConfig({
   chains: [chain],
   connectors: [injected()],
   transports: { [chain.id]: transport },
+  ssr: true,
 })
 
 export function Providers({ children }: { children: React.ReactNode }) {

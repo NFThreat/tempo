@@ -1,17 +1,32 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { formatUnits, maxUint64 } from 'viem'
 import { useAccount, useReadContract, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
 import { ACCOUNT_KEYCHAIN, ACTIVATE_SELECTOR, RENEW_SELECTOR, TRANSFER_SELECTOR } from '@/lib/constants'
 import { keychainAbi, passAbi } from '@/lib/abis'
+import WalletButton from '@/components/WalletButton'
+import Whale from '@/components/Whale'
 
 type Step = 'idle' | 'key' | 'authorize' | 'subscribe' | 'activate' | 'done'
+
+interface PassInfo {
+  name: string
+  symbol: string
+  price: string
+  billingPeriod: number
+  gracePeriod: number
+  treasury: string
+}
 
 export default function PassPage({ params }: { params: Promise<{ address: string }> }) {
   const [address, setAddress] = useState<string>('')
   useEffect(() => {
-    params.then((p) => setAddress(p.address))
+    params.then((p) => {
+      // Tolerate the padded 32-byte form from raw event topic links.
+      const a = /^0x[0-9a-fA-F]{64}$/.test(p.address) ? `0x${p.address.slice(-40)}` : p.address
+      setAddress(a)
+    })
   }, [params])
 
   const pass = address as `0x${string}` | undefined
@@ -21,25 +36,43 @@ export default function PassPage({ params }: { params: Promise<{ address: string
   const [error, setError] = useState('')
   const [now, setNow] = useState(Date.now())
 
+  const [info, setInfo] = useState<PassInfo | null>(null)
+  const [infoError, setInfoError] = useState('')
+  const [infoLoading, setInfoLoading] = useState(false)
+
+  const loadInfo = useCallback(async () => {
+    if (!pass) return
+    setInfoLoading(true)
+    setInfoError('')
+    try {
+      const res = await fetch(`/api/pass/${pass}/config`, { cache: 'no-store' })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'failed to load pass config')
+      setInfo({
+        name: json.name,
+        symbol: json.symbol,
+        price: json.price,
+        billingPeriod: json.billingPeriod,
+        gracePeriod: json.gracePeriod,
+        treasury: json.treasury,
+      })
+    } catch (e) {
+      setInfoError((e as Error).message)
+    } finally {
+      setInfoLoading(false)
+    }
+  }, [pass])
+
+  useEffect(() => {
+    loadInfo()
+  }, [loadInfo])
+
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(t)
   }, [])
 
-  const { data: config } = useReadContract({
-    address: pass,
-    abi: passAbi,
-    functionName: 'config',
-    query: { enabled: !!pass },
-  })
-  const { data: name } = useReadContract({
-    address: pass,
-    abi: passAbi,
-    functionName: 'name',
-    query: { enabled: !!pass },
-  })
-
-  const { data: myTokenId } = useReadContract({
+  const { data: myTokenId, refetch: refetchToken } = useReadContract({
     address: pass,
     abi: passAbi,
     functionName: 'tokenOfOwner',
@@ -57,18 +90,75 @@ export default function PassPage({ params }: { params: Promise<{ address: string
   const subscribed = myTokenId !== undefined && myTokenId > 0n
   const active = expiresAt !== undefined && expiresAt > BigInt(Math.floor(now / 1000))
 
-  const { writeContractAsync, isPending: writing } = useWriteContract()
+  const { writeContractAsync, reset: resetWrite } = useWriteContract()
+  const [busy, setBusy] = useState(false)
   const [subTxHash, setSubTxHash] = useState<`0x${string}`>()
   const { isSuccess: subConfirmed } = useWaitForTransactionReceipt({ hash: subTxHash })
 
+  const [accessKeyId, setAccessKeyId] = useState<string>()
+  const [accessKeyRevoked, setAccessKeyRevoked] = useState(false)
+  const [keyIdError, setKeyIdError] = useState('')
+  const [cancelStep, setCancelStep] = useState<'idle' | 'confirm' | 'pending' | 'done'>('idle')
+  const [cancelTxHash, setCancelTxHash] = useState<`0x${string}`>()
+  const { isSuccess: cancelConfirmed } = useWaitForTransactionReceipt({ hash: cancelTxHash })
+
+  useEffect(() => {
+    if (cancelConfirmed) {
+      setCancelStep('done')
+      setCancelTxHash(undefined)
+    }
+  }, [cancelConfirmed])
+
+  useEffect(() => {
+    if (!pass || !wallet || !subscribed || accessKeyId) return
+    fetch(`/api/pass/${pass}/key?user=${wallet}`, { cache: 'no-store' })
+      .then(async (res) => {
+        const json = await res.json()
+        if (!res.ok) throw new Error(json.error ?? 'failed to load access key')
+        setAccessKeyId(json.keyId)
+        setAccessKeyRevoked(json.revoked)
+      })
+      .catch((e) => setKeyIdError((e as Error).message))
+  }, [pass, wallet, subscribed, accessKeyId])
+
+  async function cancelSubscription() {
+    if (!accessKeyId) return
+    setCancelStep('pending')
+    setError('')
+    try {
+      const hash = await writeContractAsync({
+        address: ACCOUNT_KEYCHAIN,
+        abi: keychainAbi,
+        functionName: 'revokeKey',
+        args: [accessKeyId as `0x${string}`],
+        // The keychain precompile mis-estimates gas (returns a sentinel above the
+        // RPC cap); the actual call is cheap, so set a fixed limit.
+        gas: 1_000_000n,
+      })
+      setCancelTxHash(hash)
+    } catch (e) {
+      setError((e as Error).message)
+      setCancelStep('idle')
+      resetWrite()
+    }
+  }
+
   const priceStr = useMemo(
-    () => (config ? formatUnits(config[1], 6) : ''),
-    [config],
+    () => (info ? formatUnits(BigInt(info.price), 6) : ''),
+    [info],
   )
-  const periodDays = useMemo(() => (config ? Math.round(Number(config[2]) / 86400) : 0), [config])
+  const periodDays = useMemo(
+    () => (info ? Math.round(info.billingPeriod / 86400) : 0),
+    [info],
+  )
 
   async function subscribe() {
-    if (!wallet || !pass || !config) return
+    if (!wallet || !pass) return
+    if (!info) {
+      setError('Pass config not loaded yet — wait a moment and try again.')
+      return
+    }
+    setBusy(true)
     setError('')
     setStep('key')
     try {
@@ -128,6 +218,9 @@ export default function PassPage({ params }: { params: Promise<{ address: string
     } catch (e) {
       setError((e as Error).message)
       setStep('idle')
+      resetWrite()
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -146,16 +239,19 @@ export default function PassPage({ params }: { params: Promise<{ address: string
         })
         const json = await res.json()
         if (!res.ok) throw new Error(json.error ?? 'activation failed')
+        refetchToken()
         setStep('done')
       } catch (e) {
         setError((e as Error).message)
         setStep('done')
       }
     })()
-  }, [subConfirmed, pass, wallet])
+  }, [subConfirmed, pass, wallet, refetchToken])
 
   async function burnExpired() {
     if (!pass || !myTokenId) return
+    setBusy(true)
+    setError('')
     try {
       await writeContractAsync({
         address: pass,
@@ -165,76 +261,187 @@ export default function PassPage({ params }: { params: Promise<{ address: string
       })
     } catch (e) {
       setError((e as Error).message)
+      resetWrite()
+    } finally {
+      setBusy(false)
     }
   }
 
-  if (!pass) return <p>Loading…</p>
+  if (!pass) return <p style={{ padding: 40, color: 'var(--muted)', textAlign: 'center' }}>Loading…</p>
+
+  const steps: { id: Step; label: string }[] = [
+    { id: 'key', label: 'Create key' },
+    { id: 'authorize', label: 'Authorize' },
+    { id: 'subscribe', label: 'Mint pass' },
+    { id: 'activate', label: 'First payment' },
+  ]
 
   return (
-    <div>
-      <h1>{name ?? 'Pass'}</h1>
-      <p style={{ color: '#8b949e', wordBreak: 'break-all' }}>{pass}</p>
+    <div className="container" style={{ paddingTop: 40, paddingBottom: 64, maxWidth: 760 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+        <Whale size={40} />
+        <div>
+          <h1 style={{ margin: 0 }}>
+            {info?.name ?? 'Pass'}{' '}
+            {info?.symbol && <span style={{ color: 'var(--muted)', fontWeight: 500, fontSize: 20 }}>{info.symbol}</span>}
+          </h1>
+          <div style={{ color: 'var(--muted)', fontSize: 12.5, wordBreak: 'break-all', marginTop: 2 }}>{pass}</div>
+        </div>
+      </div>
 
-      {config && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, margin: '16px 0' }}>
+      {info && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, margin: '22px 0' }}>
           <Stat label="Price" value={`${priceStr} pathUSD`} />
-          <Stat label="Billing period" value={`${periodDays} days`} />
-          <Stat label="Treasury" value={config[4]} />
+          <Stat label="Billing period" value={`${periodDays} day${periodDays === 1 ? '' : 's'}`} />
+          <Stat label="Treasury" value={info.treasury} />
         </div>
       )}
 
-      {!wallet && <p style={{ color: '#f0883e' }}>Connect your wallet to subscribe.</p>}
+      {!wallet && (
+        <div className="card" style={{ padding: '24px 22px', margin: '6px 0' }}>
+          <p style={{ margin: '0 0 16px', color: 'var(--muted)' }}>Connect your wallet to subscribe.</p>
+          <WalletButton />
+        </div>
+      )}
 
       {wallet && !subscribed && (
-        <div>
-          <button onClick={subscribe} disabled={writing} style={button}>
-            {writing ? 'Waiting for signatures…' : 'Subscribe'}
-          </button>
-          {step !== 'idle' && <p style={{ color: '#8b949e' }}>Step: {step}</p>}
+        <div style={{ margin: '6px 0' }}>
+          {info ? (
+            <div className="card card-aqua" style={{ padding: '24px 22px' }}>
+              <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>
+                Subscribe to {info.name}
+              </div>
+              <p style={{ margin: '0 0 18px', color: 'var(--muted)', fontSize: 14, lineHeight: 1.55 }}>
+                You authorize one access key (a recurring limit of {priceStr} pathUSD per {periodDays} day
+                {periodDays === 1 ? '' : 's'}), then mint. Renewals charge automatically — cancel anytime.
+              </p>
+              <button onClick={subscribe} disabled={busy} className="btn btn-primary" style={{ fontSize: 16, padding: '14px 24px' }}>
+                {busy ? 'Waiting for signatures…' : `Subscribe — ${priceStr} pathUSD`}
+              </button>
+            </div>
+          ) : infoError ? (
+            <div className="error-box">
+              <p style={{ margin: '0 0 12px' }}>Could not load the pass config: {infoError}</p>
+              <button onClick={() => loadInfo()} className="btn btn-muted" style={{ padding: '10px 16px' }}>
+                Retry
+              </button>
+            </div>
+          ) : (
+            <p style={{ color: 'var(--muted)' }}>{infoLoading ? 'Loading pass config…' : 'Loading pass config…'}</p>
+          )}
+
+          {step !== 'idle' && step !== 'done' && (
+            <div className="card" style={{ marginTop: 16 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                {steps.map((s, i) => {
+                  const activeIdx = steps.findIndex((x) => x.id === step)
+                  const done = i < activeIdx
+                  const current = i === activeIdx
+                  return (
+                    <span
+                      key={s.id}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, fontWeight: 600, color: done ? 'var(--success-deep)' : current ? 'var(--ink)' : 'var(--muted)' }}
+                    >
+                      <span
+                        style={{
+                          width: 20,
+                          height: 20,
+                          borderRadius: '50%',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: 11,
+                          fontWeight: 800,
+                          background: done ? 'var(--success)' : current ? 'var(--primary)' : 'var(--primary-soft)',
+                          color: done || current ? '#fff' : 'var(--muted)',
+                        }}
+                      >
+                        {done ? '✓' : i + 1}
+                      </span>
+                      {s.label}
+                      {i < steps.length - 1 && <span style={{ color: 'var(--border)', margin: '0 2px' }}>—</span>}
+                    </span>
+                  )
+                })}
+              </div>
+              {busy && (
+                <p style={{ margin: '12px 0 0', color: 'var(--muted)', fontSize: 13 }}>
+                  Waiting for your wallet — check the signature request.
+                </p>
+              )}
+            </div>
+          )}
         </div>
       )}
 
       {wallet && subscribed && (
-        <div>
-          <p>
-            Your pass: <strong>#{myTokenId?.toString()}</strong>{' '}
-            {active ? <span style={{ color: '#3fb950' }}>● active</span> : <span style={{ color: '#f85149' }}>● expired</span>}
-          </p>
-          {expiresAt !== undefined && expiresAt > 0n && (
-            <p style={{ color: '#8b949e' }}>
-              Renewal due:{' '}
-              {new Date(Number(expiresAt) * 1000).toLocaleString()} — renewals are charged automatically via your
-              access key. Stop funding the wallet and the pass burns after the grace period.
-            </p>
-          )}
-          {!active && myTokenId !== undefined && (
-            <button onClick={burnExpired} style={{ ...button, background: '#b62324' }}>
-              Burn expired pass
-            </button>
-          )}
+        <div style={{ margin: '6px 0' }}>
+          <div className="card">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ fontWeight: 800 }}>Your pass: #{myTokenId?.toString()}</span>
+              <span className={`pill ${active ? 'pill-active' : 'pill-expired'}`}>
+                {active ? '● active' : '● expired'}
+              </span>
+            </div>
+            {expiresAt !== undefined && expiresAt > 0n && (
+              <p style={{ color: 'var(--muted)', margin: '12px 0 0', fontSize: 14, lineHeight: 1.55 }}>
+                Renewal due: <span style={{ color: 'var(--ink)', fontWeight: 600 }}>{new Date(Number(expiresAt) * 1000).toLocaleString()}</span>
+                {' — renewals are charged automatically via your access key. Cancel anytime from here or from Your subs.'}
+              </p>
+            )}
+
+            {!active && myTokenId !== undefined && (
+              <button onClick={burnExpired} disabled={busy} className="btn btn-danger" style={{ marginTop: 16 }}>
+                {busy ? 'Burning…' : 'Burn expired pass'}
+              </button>
+            )}
+
+            {active && (
+              <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                {accessKeyRevoked || cancelStep === 'done' ? (
+                  <p style={{ margin: 0, color: 'var(--amber-deep)', fontSize: 14, lineHeight: 1.55, background: 'var(--amber-soft)', borderRadius: 10, padding: '12px 14px' }}>
+                    Subscription cancelled — renewals stopped. The pass stays active until the current period
+                    ends{expiresAt !== undefined && expiresAt > 0n ? ` (${new Date(Number(expiresAt) * 1000).toLocaleString()})` : ''}, then expires
+                    and can be burned by anyone.
+                  </p>
+                ) : cancelStep === 'pending' ? (
+                  <p style={{ margin: 0, color: 'var(--muted)', fontSize: 14 }}>Cancelling… check your wallet.</p>
+                ) : cancelStep === 'confirm' ? (
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span style={{ color: 'var(--ink)', fontSize: 14, fontWeight: 600 }}>Stop automatic renewals?</span>
+                    <button onClick={cancelSubscription} className="btn btn-danger" style={{ padding: '10px 16px' }}>
+                      Yes, cancel
+                    </button>
+                    <button onClick={() => setCancelStep('idle')} className="btn btn-muted" style={{ padding: '10px 16px' }}>
+                      Keep
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={() => setCancelStep('confirm')} className="btn btn-danger-outline">
+                    Cancel subscription
+                  </button>
+                )}
+                {keyIdError && cancelStep === 'idle' && (
+                  <p style={{ margin: '10px 0 0', color: 'var(--muted)', fontSize: 12.5 }}>
+                    Could not load your access key: {keyIdError}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
-      {error && <p style={{ color: '#f85149' }}>{error}</p>}
+      {error && <div className="error-box" style={{ marginTop: 16 }}>{error}</div>}
     </div>
   )
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 8, padding: 12 }}>
-      <div style={{ color: '#8b949e', fontSize: 12 }}>{label}</div>
-      <div style={{ wordBreak: 'break-all' }}>{value}</div>
+    <div className="card" style={{ padding: '12px 16px' }}>
+      <div style={{ color: 'var(--muted)', fontSize: 12, marginBottom: 4, fontWeight: 600 }}>{label}</div>
+      <div style={{ wordBreak: 'break-all', fontSize: 14.5 }}>{value}</div>
     </div>
   )
-}
-
-const button: React.CSSProperties = {
-  padding: '10px 16px',
-  background: '#238636',
-  border: 'none',
-  borderRadius: 6,
-  color: '#fff',
-  fontWeight: 600,
-  cursor: 'pointer',
 }

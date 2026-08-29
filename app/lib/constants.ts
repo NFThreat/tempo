@@ -4,7 +4,7 @@ import { tempoModerato } from 'viem/tempo/chains'
 export const chain = tempoModerato
 
 export const PATHUSD = '0x20C0000000000000000000000000000000000000' as const
-export const ACCOUNT_KEYCHAIN = '0xAAAAAAAA00000000000000000000000000000000' as const
+export const ACCOUNT_KEYCHAIN = '0xaaaaaaaa00000000000000000000000000000000' as const
 
 export const FACTORY_ADDRESS = (process.env.NEXT_PUBLIC_FACTORY_ADDRESS ?? '') as `0x${string}`
 export const RELAYER_URL = process.env.NEXT_PUBLIC_RELAYER_URL ?? 'http://localhost:3001'

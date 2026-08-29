@@ -220,6 +220,13 @@ export const keychainAbi = [
   },
   {
     type: 'function',
+    name: 'revokeKey',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'keyId', type: 'address' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
     name: 'getKey',
     stateMutability: 'view',
     inputs: [
