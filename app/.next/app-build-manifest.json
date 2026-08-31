@@ -11,11 +11,6 @@
       "static/chunks/main-app.js",
       "static/chunks/app/page.js"
     ],
-    "/api/pass/[address]/config/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/pass/[address]/config/route.js"
-    ],
     "/launch/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
@@ -26,15 +21,10 @@
       "static/chunks/main-app.js",
       "static/chunks/app/subs/page.js"
     ],
-    "/pass/[address]/page": [
+    "/api/pass/[address]/config/route": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/pass/[address]/page.js"
-    ],
-    "/api/subs/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/subs/route.js"
+      "static/chunks/app/api/pass/[address]/config/route.js"
     ]
   }
 }

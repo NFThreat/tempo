@@ -1,144 +1,85 @@
-# Tempo Pass — subscription NFT launchpad (testnet)
+# Whel Pass — subscription NFT launchpad (testnet)
 
 Launch NFT passes paired with auto-recurring payments on **Tempo** (testnet Moderato, chain 42431).
-Users subscribe in stablecoins (pathUSD); renewals are charged automatically via **Tempo access
-keys with recurring spend limits**; passes that stop paying **expire and burn** after a grace
-period. A mirror copy of each pass is synced to Ethereum (Sepolia) for compatibility.
+Users subscribe in stablecoins (pathUSD); payments are **pulled onchain** by the pass contract;
+renewals are charged automatically via **Tempo access keys with recurring spend limits**; passes
+that stop paying **expire and burn** after a grace period. Subscriptions can be **cancelled
+anytime** by revoking the access key. A mirror copy of each pass is synced to Ethereum (Sepolia)
+for compatibility.
 
-## How the recurring payment works (Tempo-only)
+## Architecture
 
-1. **Subscribe** — the user's wallet provisions a *limited access key* at the Account Keychain
-   precompile (`0xAAAAAAAA00000000000000000000000000000000`): recurring limit `price + 10%`
-   (fee buffer) per `billingPeriod` on the payment token, call-scoped to:
-   - `transfer(paymentToken)` → pass treasury only
-   - `activate(uint256)` and `renew(uint256)` on the pass contract
-2. **Activate** — the relayer signs a batched Tempo transaction with that key: pay the first
-   period to the treasury + activate the pass. The network enforces the limit and scope —
-   the relayer can never overcharge or redirect funds.
-3. **Renew** — when a period ends, the relayer signs the same payment again. The renewal fires
-   *at/after* expiry (within the grace window) because the keychain's recurring limit only
-   rolls over at `periodEnd`. If the user stops funding the wallet, renewal reverts.
-4. **Expire & burn** — after `expiry + gracePeriod`, anyone can call `burnExpired`; the NFT is
-   burned on Tempo and mirrored off Ethereum.
+| Piece | Where | Notes |
+|---|---|---|
+| `PassFactory` | Tempo `0x139a86d284db280745eb71bcaee543f02e35c987` | v2 — deploys `PassNFT` collections (deploy fee 0) |
+| `PassNFT` v2 | Tempo (one per pass) | soulbound, self-service `subscribe(keyId)`, `unsubscribe()`, onchain payment pull, permissionless `burnExpired` |
+| Relayer | `relayer/` (port 3001) | creates access keys, activates, renews, mirrors to Sepolia |
+| Web app | `app/` (port 3000) | Next.js — launch, subscribe, cancel, "Your subs" |
+| Mirror | Sepolia `0x3557fb8d1add9a041964710b375dc0211278a3a1` | ERC721 copy of the pass state (read-only compatibility) |
 
-## Verified end-to-end on Tempo testnet (Aug 2026)
+## How the payment flow works (v2, pull-based)
 
-The full lifecycle was run live on Moderato (chain 42431):
+1. **Key creation** — `POST /key` makes a fresh P256 access key for the (pass, user) pair. The
+   private key stays in the relayer; the public keyId goes to the subscriber.
+2. **Authorize** — the subscriber's wallet calls `authorizeKey` on the Account Keychain
+   precompile (`0xaaaaaaaa00000000000000000000000000000000`) with:
+   - recurring limit `price + 10%` per `billingPeriod` on the payment token
+   - call scope: `approve(paymentToken)` → **this pass contract only**, plus `activate`/`renew`
+     on the pass
+   - expiry bounded (~400 days) so an interrupted signup cannot leave a live approval forever
+3. **Subscribe** — `subscribe(keyId)` mints the pass to the caller (msg.sender enforced).
+4. **Activate** — the relayer signs `approve(pass, price) + activate(tokenId)` with the access
+   key; the pass contract **pulls `price` from the holder onchain** via `transferFrom`. No
+   payment, no activation — enforced by the contract itself.
+5. **Renew** — same batch (`approve + renew`) when the period ends, within the grace window.
+   Anti-stacking caps prepayment at ~one period ahead.
+6. **Cancel** — `revokeKey(keyId)` (one click, from the pass page or "Your subs"): every future
+   renewal reverts, the pass stays active until the paid period ends.
+7. **Expire & burn** — after `expiry + gracePeriod`, anyone can call `burnExpired`; the NFT is
+   destroyed on Tempo and mirrored off Ethereum.
 
-| Step | Result |
-|---|---|
-| PassFactory + DemoPass deployed | `0x274f7b4B…5d25`, `0x0d048576…d1` |
-| Access key created (P256) + authorized (recurring limit + scopes) | `KeyAuthorized` event ✓ |
-| Subscribe → activate via access-key-signed batched payment | pass active, expiry +30d ✓ |
-| Limit enforcement | tx reverted `SpendingLimitExceeded` until limit included fee buffer ✓ |
-| Scope enforcement | tx reverted `CallNotAllowed` until pass selectors were scoped ✓ |
-| **Auto-renewal** (60s-period pass) | two consecutive periods renewed automatically, back-to-back ✓ |
-| Burn after expiry + grace | `burnExpired` permissionless, token destroyed ✓ |
-
-Known quirks encountered (all workarounded):
-- `forge script --broadcast` to testnet can fail validation with `PolicyForbids` (legacy tx
-  fee path); deploy with `cast send --create` / `cast send` instead — identical results.
-- The access key's call scope must include the pass contract's `activate`/`renew` selectors
-  (`0xb260c42a`, `0x5baa7509`) or the batched tx reverts with `CallNotAllowed`.
-- The recurring limit must exceed the price (fees count against the key's limit):
-  relayer returns `limit = price * 1.1`.
-
-## Repository layout
-
-```
-contracts/   Foundry: PassNFT, PassFactory, MirrorPassNFT + 27 tests + deploy scripts
-relayer/     TypeScript: access-key creation, renewal worker, Tempo->ETH mirror sync
-app/         Next.js + wagmi + viem/tempo: launch, list and subscribe flows
-```
-
-## Prerequisites
-
-- [Foundry](https://getfoundry.sh/) (Tempo support is in upstream releases)
-- Node 20+
-- A wallet with testnet funds: `cast rpc tempo_fundAddress <ADDRESS> --rpc-url https://rpc.moderato.tempo.xyz`
-
-## 1. Contracts
+## Setup
 
 ```bash
+# contracts (forge)
 cd contracts
-forge build
-forge test                                  # 27 tests
-```
+cp .env.example .env  # set PRIVATE_KEY (funded Tempo EOA)
+forge test
+# deploy the factory (CREATEs on Tempo need a large gas limit):
+TEMPO_RPC_URL=https://rpc.moderato.tempo.xyz PRIVATE_KEY=0x... \
+  forge script Deploy --rpc-url tempo --broadcast --gas-estimate-multiplier 800
 
-Deploy the factory on Moderato:
+# relayer
+cd ../relayer
+cp .env.example .env   # FACTORY_ADDRESS, MIRROR_* (optional), PASS_ADDRESSES
+npm run start          # loads .env via --env-file-if-exists
 
-```bash
-export TEMPO_TESTNET_RPC_URL=https://rpc.moderato.tempo.xyz
-export PRIVATE_KEY=<deployer>
-forge script script/Deploy.s.sol:Deploy --rpc-url moderato --broadcast
-```
-
-> Note: if `forge script --broadcast` fails validation with `PolicyForbids` on testnet,
-> deploy the same contracts via `cast` instead — it uses a fee path that passes:
-
-```bash
-INIT=$(forge inspect src/PassFactory.sol:PassFactory bytecode)
-ARGS=$(cast abi-encode "constructor(address,uint256)" 0x20C0000000000000000000000000000000000000 0)
-cast send --rpc-url $TEMPO_TESTNET_RPC_URL --private-key $PRIVATE_KEY \
-  --create "$(cast concat-hex $INIT $ARGS)"
-```
-
-Deploy the ETH mirror on Sepolia:
-
-```bash
-export PRIVATE_KEY=<deployer>  # Sepolia key
-export MIRROR_RELAYER=<relayer EOA address>   # same account the relayer uses on ETH
-forge script script/Deploy.s.sol:Deploy --sig runMirror() --rpc-url sepolia --broadcast
-```
-
-## 2. Relayer (renewals + mirror)
-
-```bash
-cd relayer
-cp .env.example .env   # fill addresses + relayer keys
-npm install
-npm start              # serve HTTP + renewal worker + mirror worker
-```
-
-Endpoints: `POST /key` (create access key), `POST /activate` (charge first period + activate),
-`GET /health`. State persists in `data/state.json`.
-
-> The relayer EOA must hold pathUSD to pay tx fees (faucet it on testnet).
-
-## 3. App
-
-```bash
-cd app
-export NEXT_PUBLIC_FACTORY_ADDRESS=<factory>          # after step 1
-export NEXT_PUBLIC_RELAYER_URL=http://localhost:3001
-export NEXT_PUBLIC_RELAYER_ADDRESS=<relayer EOA>      # prefill relayer field on /launch
-npm install
+# web app
+cd ../app
+echo "NEXT_PUBLIC_FACTORY_ADDRESS=0x..." > .env.local
 npm run dev
 ```
 
-- `/` — browse launched passes
-- `/launch` — deploy a new pass collection (fee-charging factory)
-- `/pass/[address]` — subscribe (authorize key → mint → first payment) and monitor status
+Environment knobs: `relayer/.env` — `TEMPO_RPC_URL`, `FACTORY_ADDRESS`, `RELAYER_PORT`,
+`DB_PATH` (access-key private keys — chmod 600, never commit), `ETH_RPC_URL`,
+`MIRROR_ADDRESS`, `MIRROR_RELAYER_PK`, `PASS_ADDRESSES` (one pass per mirror contract —
+tokenIds would collide otherwise). App: `NEXT_PUBLIC_FACTORY_ADDRESS`,
+`NEXT_PUBLIC_RELAYER_URL` (server-side proxy — browsers never talk to the relayer directly).
 
-## Subscription flow (end-to-end)
+## Hardening included
 
-1. Pass owner deploys a pass via the factory (sets price, billing period, grace, treasury, relayer).
-2. Buyer clicks *Subscribe*: the app asks the relayer for a fresh P256 access key.
-3. Buyer's wallet authorizes the key (recurring limit + `transfer@treasury` scope) — one signature.
-4. Buyer's wallet mints the pass — one signature.
-5. The relayer pays the first period with the access key and activates the pass.
-6. Every period, the relayer renews automatically. Unpaid → grace → anyone burns.
+- PassNFT v2: self-service mint only, soulbound, onchain payment pull, anti-stacking,
+  `unsubscribe` for interrupted signups, permissionless burn after expiry + grace.
+- Relayer: per-IP rate limiting, 8KB body cap, revoked-key subscription cleanup, `state.json`
+  written with mode 600.
+- App: RPC read caching (30s), server-side relayer proxy, bounded key expiry, inline undo for
+  interrupted signups.
 
-## Security model (read before prod)
+## Known limitations
 
-- Access-key limits and call scopes are enforced by the protocol: the relayer can only move
-  `price` per `billingPeriod` to the treasury. Revoke any time via `revokeKey`.
-- The relayer holds access-key private keys in `data/state.json` — plaintext, for testnet only.
-  Production: encrypt at rest (KMS), non-extractable WebCrypto keys, or delegated signing.
-- The ETH mirror is a compatibility claim; canonical subscription state lives on Tempo.
-
-## Roadmap
-
-- Scheduled-transaction based payouts (Pillar A: platform fees → NFT holders, with Earn vaults)
-- Collection-gated sales (only pass holders can buy)
-- Fee sponsorship (gasless subscribe via Fee Payer API)
+- Old demo passes live on the v1 factory (`0x274f7b4B…5d25`) — reachable by URL only; the v1
+  contract does NOT include the v2 security fixes.
+- NFT metadata `baseURI` defaults to a placeholder — host real metadata for wallet rendering.
+- The relayer holds subscriber access-key private keys by design (that is how it renews);
+  run it on a trusted machine.
+- Deploy fee is 0 — anyone can create pass collections (set `setDeployFee` to deter spam).

@@ -2,10 +2,11 @@ import { createPublicClient, createWalletClient, encodeFunctionData, http, parse
 import { privateKeyToAccount } from 'viem/accounts'
 import { Account, P256, createClient } from 'viem/tempo'
 import { tempoModerato } from 'viem/tempo/chains'
-import { PATHUSD, config } from './config.js'
+import { ACCOUNT_KEYCHAIN, PATHUSD, config } from './config.js'
 
 export const passAbi = parseAbi([
-  'function subscribe(address to) returns (uint256)',
+  'function subscribe(address keyId) returns (uint256)',
+  'function unsubscribe()',
   'function activate(uint256 tokenId)',
   'function renew(uint256 tokenId)',
   'function burnExpired(uint256 tokenId)',
@@ -17,7 +18,12 @@ export const passAbi = parseAbi([
 
 export const tip20Abi = parseAbi([
   'function transfer(address to, uint256 amount) returns (bool)',
+  'function approve(address spender, uint256 amount) returns (bool)',
   'function balanceOf(address) view returns (uint256)',
+])
+
+export const keychainAbi = parseAbi([
+  'function getKey(address account, address keyId) view returns (uint8 signatureType, address keyId, uint64 expiry, bool enforceLimits, bool isRevoked)',
 ])
 
 export const mirrorAbi = parseAbi([
@@ -54,6 +60,18 @@ export function keyIdFromPrivate(privateKey: string): `0x${string}` {
   return Account.fromP256(privateKey as `0x${string}`).address
 }
 
+/// True when the Account Keychain reports the key as revoked — used to stop
+/// retrying renewals for cancelled subscriptions.
+export async function isKeyRevoked(user: `0x${string}`, keyId: `0x${string}`): Promise<boolean> {
+  const key = await publicClient.readContract({
+    address: ACCOUNT_KEYCHAIN,
+    abi: keychainAbi,
+    functionName: 'getKey',
+    args: [user, keyId],
+  })
+  return key[4]
+}
+
 /// Batch-send a TIP-20 payment to the treasury plus pass contract calls,
 /// signed by the subscriber's access key. Fees are paid in pathUSD.
 export async function payAndCall(
@@ -77,6 +95,14 @@ export function tip20TransferData(to: string, amount: bigint): `0x${string}` {
     abi: parseAbi(['function transfer(address to, uint256 amount) returns (bool)']),
     functionName: 'transfer',
     args: [to as `0x${string}`, amount],
+  })
+}
+
+export function tip20ApproveData(spender: string, amount: bigint): `0x${string}` {
+  return encodeFunctionData({
+    abi: parseAbi(['function approve(address spender, uint256 amount) returns (bool)']),
+    functionName: 'approve',
+    args: [spender as `0x${string}`, amount],
   })
 }
 

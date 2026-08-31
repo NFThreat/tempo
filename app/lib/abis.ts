@@ -17,11 +17,15 @@ export const passAbi = [
     type: 'function',
     name: 'subscribe',
     stateMutability: 'nonpayable',
-    inputs: [
-      { name: 'to', type: 'address' },
-      { name: 'keyId', type: 'address' },
-    ],
+    inputs: [{ name: 'keyId', type: 'address' }],
     outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'unsubscribe',
+    stateMutability: 'nonpayable',
+    inputs: [],
+    outputs: [],
   },
   {
     type: 'function',

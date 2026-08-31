@@ -1,9 +1,9 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { formatUnits, maxUint64 } from 'viem'
+import { formatUnits } from 'viem'
 import { useAccount, useReadContract, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
-import { ACCOUNT_KEYCHAIN, ACTIVATE_SELECTOR, RENEW_SELECTOR, TRANSFER_SELECTOR } from '@/lib/constants'
+import { ACCOUNT_KEYCHAIN, ACTIVATE_SELECTOR, APPROVE_SELECTOR, RENEW_SELECTOR } from '@/lib/constants'
 import { keychainAbi, passAbi } from '@/lib/abis'
 import WalletButton from '@/components/WalletButton'
 import Whale from '@/components/Whale'
@@ -173,11 +173,13 @@ export default function PassPage({ params }: { params: Promise<{ address: string
 
       setStep('authorize')
       // The recurring limit covers the price plus a fee buffer, so renewal
-      // transactions (price + fees) fit within the authorized limit.
+      // transactions (approve + renew, price is pulled onchain) fit within
+      // the authorized limit. The key expires after ~13 months so an
+      // interrupted signup cannot leave a live approval forever.
       const limit = BigInt(keyJson.limit)
       const billingPeriod = Number(keyJson.billingPeriod)
       const paymentToken = keyJson.paymentToken as `0x${string}`
-      const treasury = keyJson.treasury as `0x${string}`
+      const expiry = BigInt(Math.floor(Date.now() / 1000) + 400 * 86400)
       await writeContractAsync({
         address: ACCOUNT_KEYCHAIN,
         abi: keychainAbi,
@@ -186,14 +188,15 @@ export default function PassPage({ params }: { params: Promise<{ address: string
           keyJson.keyId as `0x${string}`,
           1, // P256
           {
-            expiry: maxUint64,
+            expiry,
             enforceLimits: true,
             limits: [{ token: paymentToken, amount: limit, period: BigInt(billingPeriod) }],
             allowAnyCalls: false,
             allowedCalls: [
               {
+                // the pass pulls `price` via approve + transferFrom
                 target: paymentToken,
-                selectorRules: [{ selector: TRANSFER_SELECTOR, recipients: [treasury] }],
+                selectorRules: [{ selector: APPROVE_SELECTOR, recipients: [pass] }],
               },
               {
                 target: pass,
@@ -212,7 +215,7 @@ export default function PassPage({ params }: { params: Promise<{ address: string
         address: pass,
         abi: passAbi,
         functionName: 'subscribe',
-        args: [wallet, keyJson.keyId as `0x${string}`],
+        args: [keyJson.keyId as `0x${string}`],
       })
       setSubTxHash(txHash)
     } catch (e) {
@@ -259,6 +262,25 @@ export default function PassPage({ params }: { params: Promise<{ address: string
         functionName: 'burnExpired',
         args: [myTokenId],
       })
+    } catch (e) {
+      setError((e as Error).message)
+      resetWrite()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function unsubscribe() {
+    if (!pass) return
+    setBusy(true)
+    setError('')
+    try {
+      await writeContractAsync({
+        address: pass,
+        abi: passAbi,
+        functionName: 'unsubscribe',
+      })
+      refetchToken()
     } catch (e) {
       setError((e as Error).message)
       resetWrite()
@@ -390,7 +412,19 @@ export default function PassPage({ params }: { params: Promise<{ address: string
               </p>
             )}
 
-            {!active && myTokenId !== undefined && (
+            {subscribed && expiresAt !== undefined && expiresAt === 0n && (
+              <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                <p style={{ margin: '0 0 12px', color: 'var(--muted)', fontSize: 14, lineHeight: 1.55 }}>
+                  This pass was minted but never activated — the first payment did not go through. Undo it to
+                  free your wallet and start over.
+                </p>
+                <button onClick={unsubscribe} disabled={busy} className="btn btn-danger-outline">
+                  {busy ? 'Working…' : 'Undo subscription'}
+                </button>
+              </div>
+            )}
+
+            {!active && expiresAt !== undefined && expiresAt > 0n && myTokenId !== undefined && (
               <button onClick={burnExpired} disabled={busy} className="btn btn-danger" style={{ marginTop: 16 }}>
                 {busy ? 'Burning…' : 'Burn expired pass'}
               </button>

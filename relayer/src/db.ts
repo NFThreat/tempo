@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { config } from './config.js'
 
@@ -48,7 +48,13 @@ export function loadState(): State {
 export function saveState(): void {
   if (!state) return
   mkdirSync(dirname(config.dbPath), { recursive: true })
-  writeFileSync(config.dbPath, JSON.stringify(state, null, 2))
+  // The state file holds access-key private keys — restrict to owner-only.
+  writeFileSync(config.dbPath, JSON.stringify(state, null, 2), { mode: 0o600 })
+  try {
+    chmodSync(config.dbPath, 0o600)
+  } catch {
+    // best effort on filesystems without permission support
+  }
 }
 
 export const subKey = (pass: string, user: string) => `${pass.toLowerCase()}:${user.toLowerCase()}`

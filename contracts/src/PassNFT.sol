@@ -2,21 +2,25 @@
 pragma solidity ^0.8.20;
 
 import { ERC721 } from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import { IERC20 } from "@openzeppelin/contracts/interfaces/IERC20.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
 /// @title PassNFT
-/// @notice Subscription NFT pass on Tempo. One pass per wallet. A pass is
-///         activated when the first billing period is paid, renewed in
-///         billing periods, and burned after expiry + grace period.
+/// @notice Subscription NFT pass on Tempo. One pass per wallet, bound to the
+///         paying wallet (soulbound). A pass is activated when the first
+///         billing period is paid, renewed in billing periods, and burned
+///         after expiry + grace period.
 ///
-///         Renewals are paid by the subscriber's Tempo access key (a P256
-///         key with a recurring spend limit, scoped to transfer only to the
-///         treasury). The contract verifies the signing key via the Account
-///         Keychain precompile's `getTransactionKey()`: only a transaction
-///         signed by the subscriber's own access key (or the configured
-///         relayer operator) can activate/renew a pass. The protocol's
-///         keychain enforcement guarantees the payment was made in the same
-///         atomic transaction.
+///         Payments are pulled onchain: `activate`/`renew` transfer exactly
+///         `price` from the holder to the treasury via `transferFrom`, so no
+///         external actor can activate a pass without the payment moving.
+///         The payer must grant a `paymentToken` allowance to this contract —
+///         done by the subscriber's Tempo access key (a P256 key with a
+///         recurring spend limit, scoped to `approve` for this pass). The
+///         contract verifies the signing key via the Account Keychain
+///         precompile's `getTransactionKey()`: only a transaction signed by
+///         the subscriber's own access key (or the configured relayer
+///         operator) can activate/renew a pass.
 contract PassNFT is ERC721, Ownable {
     struct PassConfig {
         /// TIP-20 stablecoin used for payments (e.g. pathUSD).
@@ -38,10 +42,10 @@ contract PassNFT is ERC721, Ownable {
     /// Operator that may also activate/renew (e.g. manual reactivation).
     address public relayer;
 
-    /// Sequential token ids, starting at 1.
+    /// Sequential token ids, starting at 1. Never reused.
     uint256 public totalSupply;
     mapping(uint256 => uint256) public expiresAtOf;
-    /// One pass per wallet.
+    /// One pass per wallet (kept in sync by _update; passes are soulbound).
     mapping(address => uint256) public tokenOfOwner;
     /// Access key authorized by the subscriber for this pass (P256 keyId).
     mapping(uint256 => address) public keyIdOf;
@@ -54,14 +58,17 @@ contract PassNFT is ERC721, Ownable {
     event Activated(address indexed subscriber, uint256 indexed tokenId, uint256 expiresAt);
     event Renewed(uint256 indexed tokenId, uint256 expiresAt);
     event ExpiredBurn(uint256 indexed tokenId, address indexed holder);
+    event Unsubscribed(address indexed subscriber, uint256 indexed tokenId);
 
     error AlreadySubscribed(address subscriber);
     error NotMinted(uint256 tokenId);
     error NotActivated(uint256 tokenId);
+    error AlreadyActivated(uint256 tokenId);
     error NotExpired(uint256 tokenId);
-    error NotRelayer();
     error NotAuthorizedKey(uint256 tokenId);
     error InvalidConfig();
+    error Soulbound();
+    error PaymentFailed(address payer, uint256 amount);
 
     constructor(
         string memory name_,
@@ -109,40 +116,66 @@ contract PassNFT is ERC721, Ownable {
     // Subscription lifecycle
     // ------------------------------------------------------------------
 
-    /// @dev Mint a pass for `to`, bound to the subscriber's access `keyId`.
+    /// @dev Soulbound: mint (from zero) and burn (to zero) are allowed, any
+    ///      holder-to-holder transfer reverts. Keeps `tokenOfOwner` in sync.
+    function _update(address to, uint256 tokenId, address auth) internal override returns (address from) {
+        from = super._update(to, tokenId, auth);
+        if (from != address(0) && to != address(0)) revert Soulbound();
+        if (from != address(0)) delete tokenOfOwner[from];
+        if (to != address(0)) tokenOfOwner[to] = tokenId;
+        return from;
+    }
+
+    /// @dev Mint a pass for the caller, bound to the subscriber's `keyId`.
     ///      The pass is not active until the first payment is confirmed via
     ///      `activate` (signed by the same access key).
-    function subscribe(address to, address keyId) external returns (uint256 tokenId) {
-        if (tokenOfOwner[to] != 0) revert AlreadySubscribed(to);
+    function subscribe(address keyId) external returns (uint256 tokenId) {
+        if (tokenOfOwner[msg.sender] != 0) revert AlreadySubscribed(msg.sender);
         ++totalSupply;
         tokenId = totalSupply;
-        tokenOfOwner[to] = tokenId;
         keyIdOf[tokenId] = keyId;
-        _safeMint(to, tokenId);
-        emit Subscribed(to, tokenId, keyId);
+        _safeMint(msg.sender, tokenId);
+        emit Subscribed(msg.sender, tokenId, keyId);
     }
 
-    /// @dev Confirm the first billing period was paid. Only callable by the
-    ///      relayer operator or in a transaction signed by the pass's access
-    ///      key (verified via the Account Keychain precompile).
+    /// @dev Clear a pass that was minted but never activated. Lets a
+    ///      subscriber undo an interrupted signup without waiting for a burn.
+    function unsubscribe() external {
+        uint256 tokenId = tokenOfOwner[msg.sender];
+        if (tokenId == 0) revert NotMinted(tokenId);
+        if (expiresAtOf[tokenId] != 0) revert AlreadyActivated(tokenId);
+        delete keyIdOf[tokenId];
+        _burn(tokenId);
+        emit Unsubscribed(msg.sender, tokenId);
+    }
+
+    /// @dev Confirm the first billing period was paid (pulled onchain from
+    ///      the holder). Only callable by the relayer operator or in a
+    ///      transaction signed by the pass's access key.
     function activate(uint256 tokenId) external onlyAuthorized(tokenId) {
-        if (_ownerOf(tokenId) == address(0)) revert NotMinted(tokenId);
-        if (expiresAtOf[tokenId] != 0) revert NotExpired(tokenId);
-        uint256 exp = block.timestamp + config.billingPeriod;
-        expiresAtOf[tokenId] = exp;
-        emit Activated(_ownerOf(tokenId), tokenId, exp);
+        address holder = _ownerOf(tokenId);
+        if (holder == address(0)) revert NotMinted(tokenId);
+        if (expiresAtOf[tokenId] != 0) revert AlreadyActivated(tokenId);
+        _charge(holder);
+        expiresAtOf[tokenId] = block.timestamp + config.billingPeriod;
+        emit Activated(holder, tokenId, expiresAtOf[tokenId]);
     }
 
-    /// @dev Confirm the next billing period was paid. Same authorization as
-    ///      `activate`. If the pass already expired, the new period starts
-    ///      from now.
+    /// @dev Confirm the next billing period was paid (pulled onchain from
+    ///      the holder). Same authorization as `activate`. If the pass
+    ///      already expired, the new period starts from now.
     function renew(uint256 tokenId) external onlyAuthorized(tokenId) {
-        if (_ownerOf(tokenId) == address(0)) revert NotMinted(tokenId);
-        if (expiresAtOf[tokenId] == 0) revert NotActivated(tokenId);
-        uint256 base = expiresAtOf[tokenId] > block.timestamp ? expiresAtOf[tokenId] : block.timestamp;
-        uint256 exp = base + config.billingPeriod;
-        expiresAtOf[tokenId] = exp;
-        emit Renewed(tokenId, exp);
+        address holder = _ownerOf(tokenId);
+        if (holder == address(0)) revert NotMinted(tokenId);
+        uint256 exp = expiresAtOf[tokenId];
+        if (exp == 0) revert NotActivated(tokenId);
+        // Anti-stacking: no renewals while more than one full period remains,
+        // so a pass can never be prepaid more than ~one period ahead.
+        if (exp > block.timestamp + config.billingPeriod) revert NotExpired(tokenId);
+        _charge(holder);
+        uint256 base = exp > block.timestamp ? exp : block.timestamp;
+        expiresAtOf[tokenId] = base + config.billingPeriod;
+        emit Renewed(tokenId, expiresAtOf[tokenId]);
     }
 
     /// @dev Anyone can burn a pass once expiry + grace period has passed.
@@ -153,10 +186,15 @@ contract PassNFT is ERC721, Ownable {
         if (exp == 0) revert NotActivated(tokenId);
         if (block.timestamp <= exp + config.gracePeriod) revert NotExpired(tokenId);
         delete expiresAtOf[tokenId];
-        delete tokenOfOwner[holder];
         delete keyIdOf[tokenId];
         _burn(tokenId);
         emit ExpiredBurn(tokenId, holder);
+    }
+
+    /// @dev Pull exactly one period price from `payer` to the treasury.
+    function _charge(address payer) internal {
+        bool ok = IERC20(config.paymentToken).transferFrom(payer, config.treasury, config.price);
+        if (!ok) revert PaymentFailed(payer, config.price);
     }
 
     /// @dev Admin: change the relayer (operator) address.

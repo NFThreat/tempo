@@ -4251,16 +4251,6 @@ eval("__webpack_require__.r(__webpack_exports__);\n/* harmony export */ __webpac
 
 /***/ }),
 
-/***/ "(ssr)/../node_modules/viem/_esm/utils/unit/formatUnits.js":
-/*!***********************************************************!*\
-  !*** ../node_modules/viem/_esm/utils/unit/formatUnits.js ***!
-  \***********************************************************/
-/***/ ((__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) => {
-
-eval("__webpack_require__.r(__webpack_exports__);\n/* harmony export */ __webpack_require__.d(__webpack_exports__, {\n/* harmony export */   formatUnits: () => (/* binding */ formatUnits)\n/* harmony export */ });\n/* harmony import */ var _Value_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./Value.js */ \"(ssr)/../node_modules/viem/_esm/utils/unit/Value.js\");\n\n/**\n *  Divides a number by a given exponent of base 10 (10exponent), and formats it into a string representation of the number..\n *\n * - Docs: https://viem.sh/docs/utilities/formatUnits\n *\n * @example\n * import { formatUnits } from 'viem'\n *\n * formatUnits(420000000000n, 9)\n * // '420'\n */\nfunction formatUnits(value, decimals) {\n    return _Value_js__WEBPACK_IMPORTED_MODULE_0__.format(value, decimals);\n}\n//# sourceMappingURL=formatUnits.js.map//# sourceURL=[module]\n//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiKHNzcikvLi4vbm9kZV9tb2R1bGVzL3ZpZW0vX2VzbS91dGlscy91bml0L2Zvcm1hdFVuaXRzLmpzIiwibWFwcGluZ3MiOiI7Ozs7O0FBQW9DO0FBQ3BDO0FBQ0E7QUFDQTtBQUNBO0FBQ0E7QUFDQTtBQUNBLFlBQVksY0FBYztBQUMxQjtBQUNBO0FBQ0E7QUFDQTtBQUNPO0FBQ1AsV0FBVyw2Q0FBWTtBQUN2QjtBQUNBIiwic291cmNlcyI6WyIvd29ya3NwYWNlcy90ZW1wby9ub2RlX21vZHVsZXMvdmllbS9fZXNtL3V0aWxzL3VuaXQvZm9ybWF0VW5pdHMuanMiXSwic291cmNlc0NvbnRlbnQiOlsiaW1wb3J0ICogYXMgVmFsdWUgZnJvbSAnLi9WYWx1ZS5qcyc7XG4vKipcbiAqICBEaXZpZGVzIGEgbnVtYmVyIGJ5IGEgZ2l2ZW4gZXhwb25lbnQgb2YgYmFzZSAxMCAoMTBleHBvbmVudCksIGFuZCBmb3JtYXRzIGl0IGludG8gYSBzdHJpbmcgcmVwcmVzZW50YXRpb24gb2YgdGhlIG51bWJlci4uXG4gKlxuICogLSBEb2NzOiBodHRwczovL3ZpZW0uc2gvZG9jcy91dGlsaXRpZXMvZm9ybWF0VW5pdHNcbiAqXG4gKiBAZXhhbXBsZVxuICogaW1wb3J0IHsgZm9ybWF0VW5pdHMgfSBmcm9tICd2aWVtJ1xuICpcbiAqIGZvcm1hdFVuaXRzKDQyMDAwMDAwMDAwMG4sIDkpXG4gKiAvLyAnNDIwJ1xuICovXG5leHBvcnQgZnVuY3Rpb24gZm9ybWF0VW5pdHModmFsdWUsIGRlY2ltYWxzKSB7XG4gICAgcmV0dXJuIFZhbHVlLmZvcm1hdCh2YWx1ZSwgZGVjaW1hbHMpO1xufVxuLy8jIHNvdXJjZU1hcHBpbmdVUkw9Zm9ybWF0VW5pdHMuanMubWFwIl0sIm5hbWVzIjpbXSwiaWdub3JlTGlzdCI6WzBdLCJzb3VyY2VSb290IjoiIn0=\n//# sourceURL=webpack-internal:///(ssr)/../node_modules/viem/_esm/utils/unit/formatUnits.js\n");
-
-/***/ }),
-
 /***/ "(ssr)/../node_modules/viem/_esm/utils/unit/parseUnits.js":
 /*!**********************************************************!*\
   !*** ../node_modules/viem/_esm/utils/unit/parseUnits.js ***!

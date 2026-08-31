@@ -21,33 +21,46 @@ export async function runMirrorLoop(): Promise<number> {
 
   const state = loadState()
   const latest = await tempoPublicClient.getBlockNumber()
-  const from = state.lastMirrorBlock > 0 ? BigInt(state.lastMirrorBlock) + 1n : latest
+  let from = state.lastMirrorBlock > 0 ? BigInt(state.lastMirrorBlock) + 1n : latest
+  // If we fell far behind (relayer down), skip ancient history — the initial
+  // mirror state is synced manually; only recent changes matter.
+  if (latest - from > 1_000_000n) {
+    console.warn(`[mirror] too far behind — jumping to ${latest - 1_000_000n}`)
+    from = latest - 1_000_000n
+  }
   if (from > latest) return 0
 
   const synced: { tokenId: bigint; holder: `0x${string}`; active: boolean }[] = []
+  // The RPC caps eth_getLogs ranges (~100k blocks) — query in chunks.
+  const maxRange = 90_000n
   for (const pass of passAddresses) {
-    const logs = await tempoPublicClient.getLogs({
-      address: getAddress(pass) as `0x${string}`,
-      event: transferEvent,
-      fromBlock: from,
-      toBlock: latest,
-    })
-    for (const log of logs) {
-      const { from: f, to: t, tokenId } = log.args as {
-        from?: `0x${string}`
-        to?: `0x${string}`
-        tokenId?: bigint
+    let start = from
+    while (start <= latest) {
+      const end = start + maxRange > latest ? latest : start + maxRange
+      const logs = await tempoPublicClient.getLogs({
+        address: getAddress(pass) as `0x${string}`,
+        event: transferEvent,
+        fromBlock: start,
+        toBlock: end,
+      })
+      for (const log of logs) {
+        const { from: f, to: t, tokenId } = log.args as {
+          from?: `0x${string}`
+          to?: `0x${string}`
+          tokenId?: bigint
+        }
+        if (!f || !t || tokenId === undefined) continue
+        const minted = f === '0x0000000000000000000000000000000000000000'
+        const burned = t === '0x0000000000000000000000000000000000000000'
+        if (minted || burned || f !== t) {
+          synced.push({
+            tokenId,
+            holder: t,
+            active: !burned,
+          })
+        }
       }
-      if (!f || !t || tokenId === undefined) continue
-      const minted = f === '0x0000000000000000000000000000000000000000'
-      const burned = t === '0x0000000000000000000000000000000000000000'
-      if (minted || burned || f !== t) {
-        synced.push({
-          tokenId,
-          holder: t,
-          active: !burned,
-        })
-      }
+      start = end + 1n
     }
   }
 

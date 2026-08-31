@@ -1,11 +1,14 @@
-import { createPublicClient, http } from 'viem'
+import { createPublicClient, http, parseAbi } from 'viem'
 import { tempoModerato } from 'viem/tempo/chains'
 import Link from 'next/link'
 import { FACTORY_ADDRESS, TEMPO_RPC } from '@/lib/constants'
-import { factoryAbi, passAbi } from '@/lib/abis'
+import { factoryAbi } from '@/lib/abis'
+import { getPassInfo } from '@/lib/passInfo'
 import Whale from '@/components/Whale'
 
 export const dynamic = 'force-dynamic'
+
+const listAbi = parseAbi(['function passCount() view returns (uint256)', 'function passes(uint256) view returns (address)'])
 
 const steps = [
   {
@@ -37,14 +40,14 @@ export default async function HomePage() {
   if (FACTORY_ADDRESS) {
     const count = await client.readContract({
       address: FACTORY_ADDRESS,
-      abi: factoryAbi,
+      abi: listAbi,
       functionName: 'passCount',
     })
     const addresses = await Promise.all(
       Array.from({ length: Number(count) }, (_, i) =>
         client.readContract({
           address: FACTORY_ADDRESS,
-          abi: factoryAbi,
+          abi: listAbi,
           functionName: 'passes',
           args: [BigInt(i)],
         }),
@@ -56,17 +59,13 @@ export default async function HomePage() {
   const rows: { address: `0x${string}`; name: string; symbol: string; price: string; period: number }[] = []
   for (const p of passes) {
     try {
-      const [name, symbol, cfg] = await Promise.all([
-        client.readContract({ address: p.address, abi: passAbi, functionName: 'name' }),
-        client.readContract({ address: p.address, abi: passAbi, functionName: 'symbol' }),
-        client.readContract({ address: p.address, abi: passAbi, functionName: 'config' }),
-      ])
+      const info = await getPassInfo(p.address)
       rows.push({
         address: p.address,
-        name,
-        symbol,
-        price: (Number(cfg[1]) / 1e6).toFixed(2),
-        period: Math.round(Number(cfg[2]) / 86400),
+        name: info.name,
+        symbol: info.symbol,
+        price: (Number(info.price) / 1e6).toFixed(2),
+        period: Math.round(info.billingPeriod / 86400),
       })
     } catch {
       rows.push({ address: p.address, name: p.name, symbol: p.symbol, price: '?', period: 0 })

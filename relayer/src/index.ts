@@ -4,6 +4,30 @@ import { loadState } from './db.js'
 import { runMirrorLoop } from './mirror.js'
 import { activateSubscription, createSubscriptionKey, getSubscriptionKey, runRenewalLoop } from './subscriptions.js'
 
+const MAX_BODY_BYTES = 8 * 1024
+// Simple per-IP rate limit: 20 requests per minute for state-changing endpoints.
+const RATE_LIMIT = 20
+const RATE_WINDOW_MS = 60_000
+const hits = new Map<string, number[]>()
+
+function rateLimited(ip: string): boolean {
+  const now = Date.now()
+  const list = (hits.get(ip) ?? []).filter((t) => now - t < RATE_WINDOW_MS)
+  if (list.length >= RATE_LIMIT) {
+    hits.set(ip, list)
+    return true
+  }
+  list.push(now)
+  hits.set(ip, list)
+  // prune other IPs occasionally so the map cannot grow unbounded
+  if (hits.size > 1000) {
+    for (const [k, v] of hits) {
+      if (v.every((t) => now - t >= RATE_WINDOW_MS)) hits.delete(k)
+    }
+  }
+  return false
+}
+
 async function handle(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) {
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`)
   const method = req.method ?? 'GET'
@@ -28,11 +52,20 @@ async function handle(req: import('node:http').IncomingMessage, res: import('nod
   const readBody = () =>
     new Promise<Record<string, string>>((resolve, reject) => {
       let data = ''
-      req.on('data', (c) => (data += c))
+      let size = 0
+      req.on('data', (c) => {
+        size += c.length
+        if (size > MAX_BODY_BYTES) {
+          reject(new Error('body too large'))
+          req.destroy()
+          return
+        }
+        data += c
+      })
       req.on('end', () => {
         try {
           resolve(JSON.parse(data || '{}'))
-        } catch (e) {
+        } catch {
           reject(new Error('invalid JSON body'))
         }
       })
@@ -44,6 +77,8 @@ async function handle(req: import('node:http').IncomingMessage, res: import('nod
     }
 
     if (method === 'POST' && url.pathname === '/key') {
+      const ip = req.socket.remoteAddress ?? 'unknown'
+      if (rateLimited(ip)) return json(429, { error: 'rate limited — slow down' })
       const body = await readBody()
       const result = await createSubscriptionKey({ pass: body.pass, user: body.user })
       return json(200, result)
@@ -57,6 +92,8 @@ async function handle(req: import('node:http').IncomingMessage, res: import('nod
     }
 
     if (method === 'POST' && url.pathname === '/activate') {
+      const ip = req.socket.remoteAddress ?? 'unknown'
+      if (rateLimited(ip)) return json(429, { error: 'rate limited — slow down' })
       const body = await readBody()
       const result = await activateSubscription({ pass: body.pass, user: body.user, tokenId: body.tokenId })
       return json(200, result)

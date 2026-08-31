@@ -13,8 +13,8 @@ export const DEFAULT_RELAYER_ADDRESS = (process.env.NEXT_PUBLIC_RELAYER_ADDRESS 
 
 export const transport = http(TEMPO_RPC)
 
-/// transfer(address,uint256) selector, used in access-key call scopes.
-export const TRANSFER_SELECTOR = '0xa9059cbb' as const
+/// approve(address,uint256) selector — the pass pulls payment via allowance.
+export const APPROVE_SELECTOR = '0x095ea7b3' as const
 /// PassNFT.activate(uint256) selector, authorized in the access-key scope.
 export const ACTIVATE_SELECTOR = '0xb260c42a' as const
 /// PassNFT.renew(uint256) selector, authorized in the access-key scope.
