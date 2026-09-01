@@ -37,7 +37,7 @@ contract PassFactoryTest is Test {
     function test_deployPassChargesFeeAndTransfersOwnership() public {
         uint256 feeBefore = token.balanceOf(address(this));
         vm.prank(user);
-        address pass = factory.deployPass("Pass", "PASS", "https://pass.example/", _cfg(), relayer);
+        address pass = factory.deployPass("Pass", "PASS", _cfg(), relayer);
 
         assertEq(factory.passCount(), 1);
         assertEq(factory.passes(0), pass);
@@ -53,7 +53,7 @@ contract PassFactoryTest is Test {
     function test_deployPassWithoutFee() public {
         PassFactory free = new PassFactory(address(token), 0);
         vm.prank(user);
-        address pass = free.deployPass("Pass", "PASS", "https://pass.example/", _cfg(), relayer);
+        address pass = free.deployPass("Pass", "PASS", _cfg(), relayer);
         assertEq(free.passCount(), 1);
         assertEq(PassNFT(pass).owner(), user);
     }
@@ -64,7 +64,7 @@ contract PassFactoryTest is Test {
         PassFactory f = new PassFactory(address(broke), deployFee);
         vm.prank(user);
         vm.expectRevert();
-        f.deployPass("Pass2", "PASS2", "https://pass.example/", _cfg(), relayer);
+        f.deployPass("Pass2", "PASS2", _cfg(), relayer);
     }
 
     function test_setDeployFeeOnlyOwner() public {
@@ -82,6 +82,6 @@ contract PassFactoryTest is Test {
         vm.expectEmit(true, true, true, true);
         emit PassFactory.PassDeployed(expectedPass, user, "Pass", "PASS");
         vm.prank(user);
-        factory.deployPass("Pass", "PASS", "https://pass.example/", _cfg(), relayer);
+        factory.deployPass("Pass", "PASS", _cfg(), relayer);
     }
 }

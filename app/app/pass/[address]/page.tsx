@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { formatUnits } from 'viem'
 import { useAccount, useReadContract, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
-import { ACCOUNT_KEYCHAIN, ACTIVATE_SELECTOR, APPROVE_SELECTOR, RENEW_SELECTOR } from '@/lib/constants'
+import { ACCOUNT_KEYCHAIN, TRANSFER_SELECTOR } from '@/lib/constants'
 import { keychainAbi, passAbi } from '@/lib/abis'
 import WalletButton from '@/components/WalletButton'
 import Whale from '@/components/Whale'
@@ -194,16 +194,15 @@ export default function PassPage({ params }: { params: Promise<{ address: string
             allowAnyCalls: false,
             allowedCalls: [
               {
-                // the pass pulls `price` via approve + transferFrom
+                // the key pushes `price` to the pass treasury
                 target: paymentToken,
-                selectorRules: [{ selector: APPROVE_SELECTOR, recipients: [pass] }],
+                selectorRules: [{ selector: TRANSFER_SELECTOR, recipients: [info.treasury as `0x${string}`] }],
               },
               {
+                // activate/renew on this pass — empty rules = any selector
+                // (the dangerous pass functions are owner-gated)
                 target: pass,
-                selectorRules: [
-                  { selector: ACTIVATE_SELECTOR, recipients: [] },
-                  { selector: RENEW_SELECTOR, recipients: [] },
-                ],
+                selectorRules: [],
               },
             ],
           },

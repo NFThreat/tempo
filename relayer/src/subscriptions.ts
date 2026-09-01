@@ -1,7 +1,7 @@
 import { getAddress } from 'viem'
 import { config } from './config.js'
 import { loadState, saveState, subKey } from './db.js'
-import { accessKeyFromPrivate, createAccessKey, isKeyRevoked, keyIdFromPrivate, passAbi, payAndCall, passCallData, publicClient, readPassConfig, tip20ApproveData } from './tempo.js'
+import { accessKeyFromPrivate, createAccessKey, isKeyRevoked, keyIdFromPrivate, passAbi, payAndCall, passCallData, publicClient, readPassConfig, tip20TransferData } from './tempo.js'
 
 export interface KeyRequest {
   pass: string
@@ -90,7 +90,7 @@ export async function activateSubscription(req: ActivateRequest): Promise<{ txHa
   // The pass contract pulls the price from the holder onchain (transferFrom),
   // so the batch approves the pass for exactly one period price, then activates.
   const receipt = await payAndCall(accessKey, [
-    { to: cfg.paymentToken, data: tip20ApproveData(pass, cfg.price) },
+    { to: cfg.paymentToken, data: tip20TransferData(cfg.treasury, cfg.price) },
     { to: pass, data: passCallData('activate', tokenId) },
   ])
   if (receipt.status !== 'success') {
@@ -150,7 +150,7 @@ export async function runRenewalLoop(): Promise<number> {
       // The pass contract pulls the price from the holder onchain, so the
       // batch approves the pass for exactly one period price, then renews.
       const receipt = await payAndCall(accessKey, [
-        { to: cfg.paymentToken, data: tip20ApproveData(pass, cfg.price) },
+        { to: cfg.paymentToken, data: tip20TransferData(cfg.treasury, cfg.price) },
         { to: pass, data: passCallData('renew', tokenId) },
       ])
       if (receipt.status !== 'success') {

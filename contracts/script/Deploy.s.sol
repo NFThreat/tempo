@@ -22,7 +22,6 @@ contract Deploy is Script {
         console2.log("feeToken (pathUSD)", PATHUSD);
         console2.log("deployFee", fee);
     }
-
     /// @dev Deploy the Ethereum mirror. Set MIRROR_RELAYER to the relayer
     ///      address that will sync Tempo state (same EOA as TEMPO_RELAYER).
     function runMirror() external {

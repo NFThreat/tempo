@@ -1,0 +1,28 @@
+# Whel Pass relayer — start with:  docker compose up -d
+# First time only: fill .env (see .env.example), then get a free ngrok
+# authtoken + static domain from https://dashboard.ngrok.com and set
+# NGROK_AUTHTOKEN + NGROK_DOMAIN in .env too.
+
+services:
+  relayer:
+    build: .
+    image: whel-relayer
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:8080" # local debugging only; public traffic goes through the tunnel
+    env_file: .env
+    environment:
+      RELAYER_PORT: "8080"
+      DB_PATH: "/app/data/state.json"
+    volumes:
+      - ./data:/app/data # access-key keys live here — back this folder up
+
+  # Public HTTPS URL (static ngrok domain, free, no credit card)
+  tunnel:
+    image: ngrok/ngrok:latest
+    restart: unless-stopped
+    command: http relayer:8080 --domain=${NGROK_DOMAIN}
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+    depends_on:
+      - relayer

@@ -25,6 +25,7 @@ export const config = {
     .filter(Boolean),
   mirrorAddress: env('MIRROR_ADDRESS', ''),
   mirrorRelayerPk: env('MIRROR_RELAYER_PK', ''),
+  stateSecret: env('STATE_SECRET', ''),
   // EOA used to sponsor gas for relayer transactions (optional).
   feePayerPk: env('FEE_PAYER_PK', ''),
 }

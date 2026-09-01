@@ -12,6 +12,7 @@ contract PassNFTTest is Test {
     address relayer = makeAddr("relayer");
     address user = makeAddr("user");
     address keyId = makeAddr("key");
+    address attacker = makeAddr("attacker");
     address treasury = makeAddr("treasury");
     uint96 price = 10e6; // 10.000000 (6 decimals)
     uint32 period = 30 days;
@@ -22,7 +23,6 @@ contract PassNFTTest is Test {
         pass = new PassNFT(
             "Pass",
             "PASS",
-            "https://pass.example/metadata/",
             PassNFT.PassConfig({
                 paymentToken: address(token),
                 price: price,
@@ -33,10 +33,8 @@ contract PassNFTTest is Test {
             relayer,
             address(this)
         );
-        // fund the subscriber and pre-approve the pass (as the access key would)
+        // the subscriber funds the recurring mandate (keychain limit caps it)
         token.mint(user, 1000e6);
-        vm.prank(user);
-        token.approve(address(pass), type(uint256).max);
     }
 
     function test_subscribeMintsButNotActive() public {
@@ -45,6 +43,7 @@ contract PassNFTTest is Test {
 
         assertEq(pass.ownerOf(tid), user);
         assertEq(pass.tokenOfOwner(user), tid);
+        assertEq(pass.keyIdOf(tid), keyId);
         assertEq(pass.totalSupply(), 1);
         assertFalse(pass.isActive(tid));
 
@@ -61,47 +60,33 @@ contract PassNFTTest is Test {
         vm.stopPrank();
     }
 
-    function test_subscribeMintsToCallerOnly() public {
-        // subscribe() mints to msg.sender, never to a third party
-        address holder = makeAddr("holder");
-        vm.prank(holder);
-        uint256 tid = pass.subscribe(keyId);
-        assertEq(pass.ownerOf(tid), holder);
-        assertEq(pass.tokenOfOwner(holder), tid);
-    }
-
-    function test_activateSetsFirstPeriodAndPullsPayment() public {
-        vm.prank(user);
-        uint256 tid = pass.subscribe(keyId);
-
-        uint256 before = token.balanceOf(treasury);
-        vm.prank(relayer);
-        pass.activate(tid);
-
-        assertEq(pass.expiresAtOf(tid), block.timestamp + period);
-        assertTrue(pass.isActive(tid));
-        assertEq(token.balanceOf(treasury), before + price);
-        assertEq(token.balanceOf(user), 1000e6 - price);
-    }
-
-    function test_activateWithoutAllowanceReverts() public {
-        vm.prank(user);
-        uint256 tid = pass.subscribe(keyId);
-        vm.prank(user);
-        token.approve(address(pass), 0);
-
-        vm.prank(relayer);
-        vm.expectRevert(); // ERC20: insufficient allowance
-        pass.activate(tid);
-    }
-
-    function test_activateOnlyRelayer() public {
+    function test_activateByRelayerMarksPeriodPaid() public {
         vm.prank(user);
         pass.subscribe(keyId);
 
-        // without an access-key-signed tx, getTransactionKey() is 0
+        // in production the relayer batch also transfers price -> treasury,
+        // signed by the access key within the keychain recurring limit
+        vm.prank(relayer);
+        pass.activate(1);
+
+        assertEq(pass.expiresAtOf(1), block.timestamp + period);
+        assertTrue(pass.isActive(1));
+    }
+
+    function test_activateOnlyRelayerOrKey() public {
+        vm.prank(user);
+        pass.subscribe(keyId);
+
+        // an EOA tx has no transaction key (root key = 0) != keyId -> revert
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(PassNFT.NotAuthorizedKey.selector, 1));
+        pass.activate(1);
+
+        vm.prank(attacker);
+        vm.expectRevert(abi.encodeWithSelector(PassNFT.NotAuthorizedKey.selector, 1));
+        pass.activate(1);
+
+        vm.prank(relayer);
         pass.activate(1);
     }
 
@@ -116,32 +101,19 @@ contract PassNFTTest is Test {
         pass.activate(1);
     }
 
-    function test_renewExtendsFromCurrentExpiryAndPullsPayment() public {
+    function test_renewByRelayerOnlyWhenExpired() public {
         vm.prank(user);
         pass.subscribe(keyId);
         vm.prank(relayer);
         pass.activate(1);
 
-        vm.warp(block.timestamp + 10 days);
-        uint256 treasuryBefore = token.balanceOf(treasury);
+        // cannot renew while the period is still running: the keychain
+        // recurring limit rolls over only at period end
         vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(PassNFT.NotExpired.selector, 1));
         pass.renew(1);
 
-        // expiry extended by a full period from the previous expiry
-        assertEq(pass.expiresAtOf(1), block.timestamp - 10 days + period + period);
-        assertTrue(pass.isActive(1));
-        assertEq(token.balanceOf(treasury), treasuryBefore + price);
-    }
-
-    function test_renewAfterExpiryRestartsFromNow() public {
-        vm.prank(user);
-        pass.subscribe(keyId);
-        vm.prank(relayer);
-        pass.activate(1);
-
-        vm.warp(block.timestamp + period + grace + 1);
-        assertFalse(pass.isActive(1));
-
+        vm.warp(block.timestamp + period + 1);
         vm.prank(relayer);
         pass.renew(1);
 
@@ -149,31 +121,14 @@ contract PassNFTTest is Test {
         assertTrue(pass.isActive(1));
     }
 
-    function test_renewCannotStackPeriods() public {
+    function test_renewByAttackerReverts() public {
         vm.prank(user);
         pass.subscribe(keyId);
         vm.prank(relayer);
         pass.activate(1);
 
-        // renewing while a full period is still ahead of the cap is allowed
-        // once (extends to now + 2 periods), then blocked by anti-stacking
-        vm.prank(relayer);
-        pass.renew(1);
-        assertEq(pass.expiresAtOf(1), block.timestamp + period + period);
-
-        vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(PassNFT.NotExpired.selector, 1));
-        pass.renew(1);
-    }
-
-    function test_renewOnlyRelayer() public {
-        vm.prank(user);
-        pass.subscribe(keyId);
-        vm.prank(relayer);
-        pass.activate(1);
-
-        // without an access-key-signed tx, getTransactionKey() is 0
-        vm.prank(user);
+        vm.warp(block.timestamp + period + 1);
+        vm.prank(attacker);
         vm.expectRevert(abi.encodeWithSelector(PassNFT.NotAuthorizedKey.selector, 1));
         pass.renew(1);
     }
@@ -203,8 +158,9 @@ contract PassNFTTest is Test {
         vm.expectRevert(abi.encodeWithSelector(PassNFT.NotExpired.selector, 1));
         pass.burnExpired(1);
 
-        // after grace period
+        // after grace period — anyone, not just the holder
         vm.warp(t0 + period + grace + 1);
+        vm.prank(attacker);
         pass.burnExpired(1);
 
         vm.expectRevert(); // token burned
@@ -245,8 +201,7 @@ contract PassNFTTest is Test {
         vm.prank(user);
         pass.subscribe(keyId);
 
-        address other = makeAddr("other");
-        vm.prank(other);
+        vm.prank(attacker);
         vm.expectRevert(abi.encodeWithSelector(PassNFT.NotMinted.selector, 0));
         pass.unsubscribe();
     }
@@ -294,11 +249,45 @@ contract PassNFTTest is Test {
         pass.setRelayer(relayer);
     }
 
-    function test_setBaseURI() public {
+    function test_tokenURIIsOnchainJson() public {
         vm.prank(user);
-        uint256 tid = pass.subscribe(keyId);
-        pass.setBaseURI("https://new.example/");
-        assertEq(pass.tokenURI(tid), "https://new.example/1");
+        pass.subscribe(keyId);
+
+        string memory uri = pass.tokenURI(1);
+        bytes memory prefix = bytes("data:application/json;base64,");
+        assertEq(bytes(uri).length > prefix.length, true);
+        for (uint256 i; i < prefix.length; ++i) {
+            assertEq(bytes(uri)[i], prefix[i]);
+        }
+    }
+
+    function test_tokenURIEscapesUserInput() public {
+        PassNFT evil = new PassNFT(
+            'Bad"><script>',
+            "BAD",
+            PassNFT.PassConfig({
+                paymentToken: address(token),
+                price: price,
+                billingPeriod: period,
+                gracePeriod: grace,
+                treasury: treasury
+            }),
+            relayer,
+            address(this)
+        );
+        address holder = makeAddr("holder");
+        vm.prank(holder);
+        evil.subscribe(keyId);
+        uint256 tid = evil.tokenOfOwner(holder);
+
+        // base64 payload must contain no raw angle brackets from the name
+        string memory uri = evil.tokenURI(tid);
+        bytes memory b = bytes(uri);
+        for (uint256 i = 30; i < b.length; ++i) {
+            bytes1 c = b[i];
+            bool ok = (c >= "A" && c <= "Z") || (c >= "a" && c <= "z") || (c >= "0" && c <= "9") || c == "+" || c == "/" || c == "=";
+            assertTrue(ok);
+        }
     }
 
     function test_rejectInvalidConfig() public {
@@ -306,7 +295,6 @@ contract PassNFTTest is Test {
         new PassNFT(
             "Bad",
             "BAD",
-            "",
             PassNFT.PassConfig({
                 paymentToken: address(0),
                 price: price,
@@ -322,7 +310,6 @@ contract PassNFTTest is Test {
         new PassNFT(
             "Bad",
             "BAD",
-            "",
             PassNFT.PassConfig({
                 paymentToken: address(token),
                 price: 0,

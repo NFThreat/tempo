@@ -12,7 +12,6 @@ export default function LaunchPage() {
   const { address: wallet } = useAccount()
   const [name, setName] = useState('')
   const [symbol, setSymbol] = useState('')
-  const [baseURI, setBaseURI] = useState('https://pass.example/metadata/')
   const [price, setPrice] = useState('10')
   const [periodDays, setPeriodDays] = useState('30')
   const [graceDays, setGraceDays] = useState('3')
@@ -48,7 +47,7 @@ export default function LaunchPage() {
       address: FACTORY_ADDRESS,
       abi: factoryAbi,
       functionName: 'deployPass',
-      args: [name, symbol, baseURI, cfg, wallet as `0x${string}`],
+      args: [name, symbol, cfg, wallet as `0x${string}`],
     })
   }
 
@@ -94,9 +93,6 @@ export default function LaunchPage() {
                 </Field>
                 <Field label="Symbol" hint="Short ticker, e.g. PASS.">
                   <input value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="PASS" className="input" />
-                </Field>
-                <Field label="Metadata base URI" hint="Token metadata lives at this URI + /tokenId.json.">
-                  <input value={baseURI} onChange={(e) => setBaseURI(e.target.value)} className="input" />
                 </Field>
               </div>
             </div>

@@ -38,7 +38,6 @@ contract PassFactory is Ownable {
     function deployPass(
         string calldata name_,
         string calldata symbol_,
-        string calldata baseURI_,
         PassNFT.PassConfig calldata cfg,
         address relayer_
     ) external returns (address pass) {
@@ -47,7 +46,7 @@ contract PassFactory is Ownable {
                 revert("PassFactory: fee transfer failed");
             }
         }
-        PassNFT nft = new PassNFT(name_, symbol_, baseURI_, cfg, relayer_, msg.sender);
+        PassNFT nft = new PassNFT(name_, symbol_, cfg, relayer_, msg.sender);
         pass = address(nft);
         passes.push(pass);
         creatorOf[pass] = msg.sender;

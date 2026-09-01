@@ -1,6 +1,1 @@
-{
-  "/api/pass/[address]/config/route": "app/api/pass/[address]/config/route.js",
-  "/page": "app/page.js",
-  "/launch/page": "app/launch/page.js",
-  "/subs/page": "app/subs/page.js"
-}
+{}

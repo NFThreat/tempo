@@ -1,0 +1,17 @@
+import { createDecipheriv, createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { Account } from 'viem/tempo';
+const raw = readFileSync('data/state.json', 'utf8').trim();
+const [magic, iv, tag, data] = raw.split('.');
+const secret = readFileSync('.env', 'utf8').match(/STATE_SECRET=(.*)/)[1].trim();
+const k = createHash('sha256').update(secret).digest();
+const d = createDecipheriv('aes-256-gcm', k, Buffer.from(iv, 'base64'));
+d.setAuthTag(Buffer.from(tag, 'base64'));
+const state = JSON.parse(Buffer.concat([d.update(Buffer.from(data, 'base64')), d.final()]).toString('utf8'));
+const key = Object.keys(state.pendingKeys).find(k2 => k2.includes('d7b80111'));
+const entry = state.pendingKeys[key];
+console.log('stored keyId:  ', entry.keyId);
+console.log('stored priv:   ', entry.accessKeyPrivate.slice(0, 20), 'len', entry.accessKeyPrivate.length);
+const derived = Account.fromP256(entry.accessKeyPrivate).address;
+console.log('derived keyId: ', derived);
+console.log('MATCH:', derived.toLowerCase() === entry.keyId.toLowerCase());

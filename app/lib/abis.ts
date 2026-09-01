@@ -113,7 +113,6 @@ export const factoryAbi = [
     inputs: [
       { name: 'name_', type: 'string' },
       { name: 'symbol_', type: 'string' },
-      { name: 'baseURI_', type: 'string' },
       {
         name: 'cfg',
         type: 'tuple',

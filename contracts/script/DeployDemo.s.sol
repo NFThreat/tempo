@@ -26,7 +26,7 @@ contract DeployDemo is Script {
             gracePeriod: 3 days,
             treasury: treasury
         });
-        address pass = factory.deployPass("Demo Pass", "DEMO", "https://pass.example/metadata/", cfg, relayer);
+        address pass = factory.deployPass("Demo Pass", "DEMO", cfg, relayer);
         vm.stopBroadcast();
 
         console2.log("PassFactory deployed at", address(factory));
