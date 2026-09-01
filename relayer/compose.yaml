@@ -1,7 +1,8 @@
 # Whel Pass relayer — start with:  docker compose up -d
 # First time only: fill .env (see .env.example), then get a free ngrok
 # authtoken + static domain from https://dashboard.ngrok.com and set
-# NGROK_AUTHTOKEN + NGROK_DOMAIN in .env too.
+# NGROK_AUTHTOKEN + NGROK_DOMAIN in .env too. The tunnel starts once both
+# are set:  docker compose --profile tunnel up -d
 
 services:
   relayer:
@@ -17,10 +18,12 @@ services:
     volumes:
       - ./data:/app/data # access-key keys live here — back this folder up
 
-  # Public HTTPS URL (static ngrok domain, free, no credit card)
+  # Public HTTPS URL (free static domain, no credit card). Starts only with
+  # `--profile tunnel` after NGROK_AUTHTOKEN and NGROK_DOMAIN are set in .env.
   tunnel:
     image: ngrok/ngrok:latest
     restart: unless-stopped
+    profiles: ["tunnel"]
     command: http relayer:8080 --domain=${NGROK_DOMAIN}
     environment:
       NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}

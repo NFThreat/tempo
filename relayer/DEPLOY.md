@@ -1,71 +1,65 @@
-# Relayer su VPS — 10 minuti
+# Relayer on your VPS — 10 minutes
 
-Tutto gira in Docker: due container (relayer + tunnel HTTPS) che sopravvivono ai reboot.
-Niente systemd, niente utenti dedicati, niente Caddy.
+Everything runs in Docker: two containers (relayer + HTTPS tunnel) that survive reboots.
+No systemd units, no dedicated users, no reverse proxy.
 
-## 1. Prerequisiti (una volta)
+## 1. Prerequisites (once)
 
 ```bash
-# Docker (se non c'è già)
+# Docker (if not already installed)
 curl -fsSL https://get.docker.com | sh
 ```
 
-Account gratuito su [dashboard.ngrok.com](https://dashboard.ngrok.com) (solo email):
-copia l'**authtoken** e crea un **static domain** (Universal Gateway → Domains).
+A free account on [dashboard.ngrok.com](https://dashboard.ngrok.com) (email only):
+copy your **authtoken** and claim a **static domain** (Universal Gateway → Domains).
 
-## 2. Copia i file sul VPS
+## 2. Copy files to the VPS
 
-Serve solo la cartella `relayer/` (Dockerfile, package.json, src, compose.yaml).
+You only need the `relayer/` folder (Dockerfile, package.json, src, compose.yaml).
 
-## 3. Configura e avvia
+## 3. Configure and start
 
 ```bash
 cd relayer
 cp .env.example .env
 nano .env      # STATE_SECRET: openssl rand -hex 32
-               # NGROK_AUTHTOKEN + NGROK_DOMAIN: dal dashboard ngrok
-docker compose up -d
+               # NGROK_AUTHTOKEN + NGROK_DOMAIN: from the ngrok dashboard
+docker compose --profile tunnel up -d   # relayer + HTTPS tunnel
 ```
 
-Fatto. HTTPS pubblico su `https://<tuo-dominio>.ngrok-free.app`, riavvii automatici,
-`state.json` cifrato (STATE_SECRET) su volume persistente `./data`.
+Done. Public HTTPS at `https://<your-domain>.ngrok-free.app`, automatic restarts,
+`state.json` encrypted (STATE_SECRET) on a persistent volume `./data`.
 
-## 4. Collega l'app
+## 4. Point the web app at it
 
-Su Vercel (Root Directory `app`), env vars prima del build:
+In Vercel (Root Directory `app`), set before the first build:
 
-- `NEXT_PUBLIC_FACTORY_ADDRESS=0x29b7a39ca48b82f6f6c9d5ee495750aeca2c6555`
-- `NEXT_PUBLIC_RELAYER_URL=https://<tuo-dominio>.ngrok-free.app`
+- `NEXT_PUBLIC_FACTORY_ADDRESS=0x8e3f7dc5beaf73461310eddb5d05a41126bce189`
+- `NEXT_PUBLIC_RELAYER_URL=https://<your-domain>.ngrok-free.app`
 
-## 5. Verifica
+## 5. Verify
 
 ```bash
-curl https://<tuo-dominio>.ngrok-free.app/health          # {"ok":true,...}
-curl https://<tuo-dominio>.ngrok-free.app/data/state.json # 404 (mai esposto)
+curl https://<your-domain>.ngrok-free.app/health          # {"ok":true,...}
+curl https://<your-domain>.ngrok-free.app/data/state.json # 404 (never exposed)
 ```
 
-Poi il ciclo completo dall'app: launch → subscribe → auto-renew → cancel → burn.
+Then run the full lifecycle from the app: launch → subscribe → auto-renew → cancel → burn.
 
-## Comandi utili
+## Useful commands
 
 ```bash
-docker compose logs -f relayer   # log (rinnovi, mirror, errori)
-docker compose restart           # riavvio
-docker compose pull && docker compose up -d --build   # aggiorna
+docker compose logs -f relayer   # logs (renewals, mirror, errors)
+docker compose restart           # restart
+docker compose up -d --build     # rebuild after code changes
 ```
 
 ## Backup
 
-Una sola cosa da salvare (password manager, fuori dal VPS):
+One thing to save (password manager, away from the VPS):
 
-- `relayer/.env` — contiene `STATE_SECRET` (senza di esso `state.json` è illeggibile e le
-  chiavi degli abbonati si perdono) e `NGROK_AUTHTOKEN`
+- `relayer/.env` — contains `STATE_SECRET` (without it `state.json` is unreadable and
+  subscriber keys are lost) and `NGROK_AUTHTOKEN`
 
-E la cartella `relayer/data/` (opzionale: contiene lo stato cifrato; senza backup gli
-abbonati devono ri-abbonarsi).
-
-## Nota ngrok free
-
-Il dominio statico gratuito è stabile e non scade. Nelle risposte ai browser ngrok
-mostra una pagina di avviso: le chiamate server-side di Vercel non sono browser e non la
-vedono mai — nessun impatto sull'app.
+Optionally `relayer/data/` (the encrypted state; without a backup subscribers must
+re-subscribe).

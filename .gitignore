@@ -9,3 +9,10 @@ contracts/broadcast/
 
 # Relayer state (contains access-key private keys — never commit)
 relayer/data/
+
+# stray forge libs at repo root (contracts/lib is the real one)
+lib/
+
+# Next.js build artifacts
+app/.next/
+*.tsbuildinfo
