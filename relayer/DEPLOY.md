@@ -1,7 +1,8 @@
-# Relayer on your VPS — 10 minutes
+# Relayer on your VPS — 10 minutes (GitHub method)
 
 Everything runs in Docker: two containers (relayer + HTTPS tunnel) that survive reboots.
-No systemd units, no dedicated users, no reverse proxy.
+No systemd units, no dedicated users, no reverse proxy. The relayer code comes from your
+GitHub repo, so future updates are a single `git pull`.
 
 ## 1. Prerequisites (once)
 
@@ -13,18 +14,26 @@ curl -fsSL https://get.docker.com | sh
 A free account on [dashboard.ngrok.com](https://dashboard.ngrok.com) (email only):
 copy your **authtoken** and claim a **static domain** (Universal Gateway → Domains).
 
-## 2. Copy files to the VPS
+## 2. Get the code from GitHub
 
-You only need the `relayer/` folder (Dockerfile, package.json, src, compose.yaml).
+In the VPS web terminal:
+
+```bash
+git clone https://github.com/<your-user>/<your-repo>.git
+cd <your-repo>/relayer
+```
+
+If the repo is private, git will ask for credentials — use a
+[Personal Access Token](https://github.com/settings/tokens) as the password (classic token
+with `repo` scope), not your GitHub password.
 
 ## 3. Configure and start
 
 ```bash
-cd relayer
 cp .env.example .env
 nano .env      # STATE_SECRET: openssl rand -hex 32
                # NGROK_AUTHTOKEN + NGROK_DOMAIN: from the ngrok dashboard
-docker compose --profile tunnel up -d   # relayer + HTTPS tunnel
+docker compose --profile tunnel up -d
 ```
 
 Done. Public HTTPS at `https://<your-domain>.ngrok-free.app`, automatic restarts,
@@ -46,12 +55,19 @@ curl https://<your-domain>.ngrok-free.app/data/state.json # 404 (never exposed)
 
 Then run the full lifecycle from the app: launch → subscribe → auto-renew → cancel → burn.
 
+## Updating
+
+```bash
+cd <your-repo>/relayer
+git pull
+docker compose --profile tunnel up -d --build
+```
+
 ## Useful commands
 
 ```bash
 docker compose logs -f relayer   # logs (renewals, mirror, errors)
 docker compose restart           # restart
-docker compose up -d --build     # rebuild after code changes
 ```
 
 ## Backup

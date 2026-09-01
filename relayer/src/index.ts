@@ -29,7 +29,9 @@ function rateLimited(ip: string): boolean {
 }
 
 async function handle(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) {
-  const url = new URL(req.url ?? '/', `http://${req.headers.host}`)
+  // tolerate double slashes from base URLs with a trailing slash
+  const rawUrl = (req.url ?? '/').replace(/^\/{2,}/, '/')
+  const url = new URL(rawUrl, `http://${req.headers.host}`)
   const method = req.method ?? 'GET'
 
   let sent = false
